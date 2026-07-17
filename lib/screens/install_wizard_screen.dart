@@ -36,6 +36,7 @@ class _InstallWizardScreenState extends State<InstallWizardScreen> {
   bool isDone = false;
   bool forceRedownload = false;
   String? installerPath;
+  String? errorMessage;
   final List<String> logs = [];
 
   CadService get service => widget.service;
@@ -58,6 +59,7 @@ class _InstallWizardScreenState extends State<InstallWizardScreen> {
 
     setState(() {
       isWorking = true;
+      errorMessage = null;
       currentStep = 1;
       logs
         ..clear()
@@ -88,9 +90,10 @@ class _InstallWizardScreenState extends State<InstallWizardScreen> {
       if (!mounted) return;
       setState(() {
         isWorking = false;
+        errorMessage = e is CadServiceException ? e.message : '$e';
         logs
           ..add('')
-          ..add('✗ Install failed: $e');
+          ..add('✗ Install failed: $errorMessage');
       });
     }
   }
@@ -219,6 +222,23 @@ class _InstallWizardScreenState extends State<InstallWizardScreen> {
         ],
       ),
       const SizedBox(height: AppSpacing.lg),
+      if (errorMessage != null) ...[
+        InfoCallout(
+          role: SemanticRole.danger,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Install failed',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(errorMessage!),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+      ],
       LogPanel(lines: logs, height: 320),
     ];
   }
@@ -273,10 +293,18 @@ class _InstallWizardScreenState extends State<InstallWizardScreen> {
                   : 'Download & Install',
             ),
           ),
-        1 => const FilledButton(
-            onPressed: null,
-            child: Text('Working...'),
-          ),
+        // A failure here is recoverable — declining the UAC prompt is easy to
+        // do by accident — so offer a retry rather than a dead "Working...".
+        1 => errorMessage != null
+            ? FilledButton.icon(
+                onPressed: _runInstall,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              )
+            : const FilledButton(
+                onPressed: null,
+                child: Text('Working...'),
+              ),
         _ => FilledButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Done'),

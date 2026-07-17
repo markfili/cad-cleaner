@@ -17,6 +17,18 @@ const gstarCadInstallerFileName = 'GstarCAD2027EN_SP1_x64.exe';
 /// Whether GstarCAD — the AutoCAD replacement — is present on the system.
 enum GstarCadStatus { checking, installed, notInstalled, failed }
 
+/// An operation failed for a reason worth showing the user verbatim.
+///
+/// Carries an actionable message, unlike a raw ProcessException.
+class CadServiceException implements Exception {
+  const CadServiceException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Everything the wizard does to the host system, independent of how it is
 /// carried out.
 ///

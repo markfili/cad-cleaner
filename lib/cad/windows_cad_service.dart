@@ -150,7 +150,40 @@ class WindowsCadService extends CadService {
   @override
   Future<void> launchGstarCadInstaller(String installerPath) async {
     log('Launching $installerPath');
-    await _processManager.start([installerPath]);
+
+    // Process.start uses CreateProcess, which cannot elevate: when the target
+    // requests admin it fails with "The requested operation requires
+    // elevation". ShellExecute's runas verb raises the UAC prompt instead, so
+    // this works whether or not we are already elevated.
+    // -ErrorAction Stop + try/catch: a failed Start-Process is a
+    // non-terminating error by default, so powershell.exe would exit 0 and the
+    // failure would go unnoticed.
+    final quoted = installerPath.replaceAll("'", "''");
+    final result = await _processManager.run([
+      'powershell',
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      "try { Start-Process -FilePath '$quoted' -Verb RunAs -ErrorAction Stop } "
+          'catch { Write-Error \$_.Exception.Message; exit 1 }',
+    ]);
+
+    if (result.exitCode != 0) {
+      final details = result.stderr.toString().trim();
+      // Declining the UAC prompt is a user choice, not a fault; say so plainly
+      // rather than surfacing a raw PowerShell error.
+      if (details.contains('canceled') || details.contains('cancelled')) {
+        throw const CadServiceException(
+          'The Windows elevation prompt was dismissed, so the installer did '
+          'not start. Choose "Yes" on that prompt to install GstarCAD.',
+        );
+      }
+      throw CadServiceException(
+        'Could not launch the installer.${details.isEmpty ? '' : ' $details'}',
+      );
+    }
+
     log('The GstarCAD setup window has taken over — follow its prompts.');
   }
 

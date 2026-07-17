@@ -34,6 +34,7 @@ class _UninstallWizardScreenState extends State<UninstallWizardScreen> {
   bool removeAppData = false;
   bool isProcessing = false;
   bool isDone = false;
+  String? errorMessage;
   final List<String> logs = [];
 
   CadService get service => widget.service;
@@ -48,6 +49,7 @@ class _UninstallWizardScreenState extends State<UninstallWizardScreen> {
 
     setState(() {
       isProcessing = true;
+      errorMessage = null;
       currentStep = 2;
       logs
         ..clear()
@@ -101,9 +103,10 @@ class _UninstallWizardScreenState extends State<UninstallWizardScreen> {
       if (!mounted) return;
       setState(() {
         isProcessing = false;
+        errorMessage = e is CadServiceException ? e.message : '$e';
         logs
           ..add('')
-          ..add('✗ Error: $e');
+          ..add('✗ Error: $errorMessage');
       });
     }
   }
@@ -313,6 +316,23 @@ class _UninstallWizardScreenState extends State<UninstallWizardScreen> {
         ],
       ),
       const SizedBox(height: AppSpacing.lg),
+      if (errorMessage != null) ...[
+        InfoCallout(
+          role: SemanticRole.danger,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Uninstall failed',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(errorMessage!),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+      ],
       LogPanel(lines: logs, height: 320),
     ];
   }
@@ -376,10 +396,16 @@ class _UninstallWizardScreenState extends State<UninstallWizardScreen> {
             icon: const Icon(Icons.delete_outline, size: 18),
             label: const Text('Uninstall'),
           ),
-        2 => const FilledButton(
-            onPressed: null,
-            child: Text('Processing...'),
-          ),
+        2 => errorMessage != null
+            ? FilledButton.icon(
+                onPressed: _performUninstall,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              )
+            : const FilledButton(
+                onPressed: null,
+                child: Text('Processing...'),
+              ),
         _ => FilledButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Done'),

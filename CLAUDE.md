@@ -65,6 +65,19 @@ changes to `windows_cad_service.dart` as unverified until proven otherwise.
   products came straight back on the next scan. If an operation changes the
   system, the mock changes `_installedProducts` / the GstarCAD flags to match.
 
+## Windows elevation
+
+`runner.exe.manifest` sets `requestedExecutionLevel=requireAdministrator`, so
+the app always elevates via UAC at launch. This is required, not a nicety: the
+removal commands all pass `-ErrorAction SilentlyContinue`, so an unelevated run
+would delete nothing and still report success.
+
+`Process.start` (CreateProcess) **cannot elevate** — launching an installer that
+requests admin fails with "The requested operation requires elevation". Launch
+such things with `Start-Process -Verb RunAs`, and pass `-ErrorAction Stop`
+inside a try/catch that does `exit 1`, since a failed `Start-Process` is a
+non-terminating error and PowerShell would otherwise exit 0 on failure.
+
 ## Theme
 
 Hand-authored light/dark `ColorScheme`s (`lib/theme/app_colors.dart`), not

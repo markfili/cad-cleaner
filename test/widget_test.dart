@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:cad_cleaner/cad/cad_service.dart';
 import 'package:cad_cleaner/cad/mock_cad_service.dart';
 import 'package:cad_cleaner/main.dart';
 
@@ -187,6 +188,36 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('a denied elevation prompt is explained and retryable',
+        (WidgetTester tester) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        CadCleanerApp(service: _ElevationDeniedMockCadService()),
+      );
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+
+      await tester.tap(find.text('Start Install Wizard'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Download & Install'));
+      await tester.pumpAndSettle(const Duration(seconds: 30));
+
+      // The failure is stated in the user's terms, not as a raw exception.
+      // It shows up twice on purpose: in the callout and in the log.
+      expect(find.text('Install failed'), findsOneWidget);
+      expect(
+        find.textContaining('elevation prompt was dismissed'),
+        findsWidgets,
+      );
+      expect(find.textContaining('ProcessException'), findsNothing);
+
+      // And it must not strand the user on a dead "Working..." button.
+      expect(find.text('Working...'), findsNothing);
+      final retry = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Retry'),
+      );
+      expect(retry.onPressed, isNotNull);
+    });
   });
 }
 
@@ -194,6 +225,17 @@ void main() {
 class _EmptyMockCadService extends MockCadService {
   @override
   Future<List<String>> detectInstallations() async => [];
+}
+
+/// Reproduces the Windows elevation failure: the UAC prompt was dismissed.
+class _ElevationDeniedMockCadService extends MockCadService {
+  @override
+  Future<void> launchGstarCadInstaller(String installerPath) async {
+    throw const CadServiceException(
+      'The Windows elevation prompt was dismissed, so the installer did not '
+      'start. Choose "Yes" on that prompt to install GstarCAD.',
+    );
+  }
 }
 
 /// A system where the GstarCAD installer was already fetched.
