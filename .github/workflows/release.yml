@@ -133,17 +133,24 @@ jobs:
             echo
             echo "## Downloads"
             echo
-            echo "| File | Use it when |"
-            echo "| --- | --- |"
-            echo "| \`CadService-Setup-$tag.exe\` | Recommended. One-click installer; adds Start Menu and desktop shortcuts. |"
-            echo "| \`CadService-windows-x64-$tag.zip\` | Portable. Unzip and run \`CadService.exe\` from inside the folder. |"
+            # printf with a single-quoted format: backticks stay literal, and
+            # only %s is substituted.
+            echo '| File | Use it when |'
+            echo '| --- | --- |'
+            printf '| `CadService-Setup-%s.exe` | Recommended. One-click installer; adds Start Menu and desktop shortcuts. |\n' "$tag"
+            printf '| `CadService-windows-x64-%s.zip` | Portable. Unzip and run `CadService.exe` from inside the folder. |\n' "$tag"
             echo
-            echo "> \`CadService.exe\` is not standalone — it needs the DLLs and \`data\\\\` folder shipped alongside it, so run it from the installed or unzipped folder, not on its own."
-            echo
-            echo "## Requirements"
-            echo
-            echo "- Windows 10 or later (x64)"
-            echo "- Administrator privileges (the wizard removes program files and registry keys)"
+            # Quoted heredoc: nothing inside is interpreted by the shell.
+            cat <<'NOTES'
+> `CadService.exe` is not standalone — it needs the DLLs and the `data\` folder
+> shipped alongside it, so run it from the installed or unzipped folder rather
+> than on its own.
+
+## Requirements
+
+- Windows 10 or later (x64)
+- Administrator privileges (the wizard removes program files and registry keys)
+NOTES
             echo
             echo "Built with Flutter ${{ env.FLUTTER_VERSION }}."
           } > release-notes.md
