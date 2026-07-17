@@ -140,17 +140,18 @@ jobs:
             printf '| `CadService-Setup-%s.exe` | Recommended. One-click installer; adds Start Menu and desktop shortcuts. |\n' "$tag"
             printf '| `CadService-windows-x64-%s.zip` | Portable. Unzip and run `CadService.exe` from inside the folder. |\n' "$tag"
             echo
-            # Quoted heredoc: nothing inside is interpreted by the shell.
-            cat <<'NOTES'
-> `CadService.exe` is not standalone — it needs the DLLs and the `data\` folder
-> shipped alongside it, so run it from the installed or unzipped folder rather
-> than on its own.
-
-## Requirements
-
-- Windows 10 or later (x64)
-- Administrator privileges (the wizard removes program files and registry keys)
-NOTES
+            # printf '%s\n' with single-quoted args: no shell interpretation of
+            # backticks or backslashes, and no heredoc indentation to get wrong
+            # inside a YAML block scalar.
+            printf '%s\n' \
+              '> `CadService.exe` is not standalone — it needs the DLLs and the' \
+              '> `data\` folder shipped alongside it, so run it from the installed' \
+              '> or unzipped folder rather than on its own.' \
+              '' \
+              '## Requirements' \
+              '' \
+              '- Windows 10 or later (x64)' \
+              '- Administrator privileges (the wizard removes program files and registry keys)'
             echo
             echo "Built with Flutter ${{ env.FLUTTER_VERSION }}."
           } > release-notes.md
