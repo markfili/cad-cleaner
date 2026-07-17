@@ -11,8 +11,10 @@
 
 set -euo pipefail
 
-# Never prompt in CI or when there's no terminal to ask on.
-if [ -n "${CI:-}" ] || [ ! -e /dev/tty ]; then
+# Never prompt in CI, or when there's no terminal to ask on. /dev/tty can exist
+# but still fail to open (cron, hooks run by a GUI client, agents), so test by
+# actually opening it rather than with -e.
+if [ -n "${CI:-}" ] || ! { exec 3< /dev/tty; } 2>/dev/null; then
   exit 0
 fi
 
@@ -26,7 +28,7 @@ build="${current##*+}"
 tag="v$name"
 
 # Read answers from the terminal: stdin here is git's ref list, not the user.
-exec < /dev/tty
+exec <&3 3<&-
 
 echo
 echo "  Current version: $name (build $build)"
