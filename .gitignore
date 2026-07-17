@@ -49,6 +49,3 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-
-# The original source archive this project was bootstrapped from.
-/files.zip
