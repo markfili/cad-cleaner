@@ -20,6 +20,12 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+# runner.exe.manifest declares requireAdministrator. By default the linker also
+# emits its own UAC block (asInvoker), and mt.exe fails to merge the two
+# conflicting requestedExecutionLevel entries: "LNK1327: failure during running
+# mt.exe". Suppress the linker's copy so the manifest file is the only source.
+target_link_options(${BINARY_NAME} PRIVATE "/MANIFESTUAC:NO")
+
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")
