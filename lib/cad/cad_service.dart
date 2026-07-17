@@ -69,7 +69,17 @@ abstract class CadService {
 
   Future<void> removeDirectories();
 
+  /// Removes the Autodesk registry keys, then verifies they are actually gone.
+  ///
+  /// Throws [CadServiceException] listing whatever survived. The removal
+  /// commands pass -ErrorAction SilentlyContinue, so without a check a failed
+  /// removal looks identical to a successful one.
   Future<void> cleanRegistry();
+
+  /// Returns the Autodesk registry keys that still exist, newest check first.
+  ///
+  /// Empty means the registry is clean.
+  Future<List<String>> findRemainingRegistryKeys();
 
   Future<void> removeAppData();
 
@@ -84,6 +94,9 @@ abstract class CadService {
 
   /// Downloads the vendor installer and returns its path.
   Future<String> downloadGstarCadInstaller();
+
+  /// Uninstalls GstarCAD using the command its registry entry provides.
+  Future<void> uninstallGstarCad();
 
   /// Launches a downloaded installer. The vendor's setup UI takes over from
   /// there; this does not attempt an unattended install.

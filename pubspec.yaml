@@ -2,7 +2,7 @@ name: cad_cleaner
 description: A Flutter desktop application to safely uninstall AutoCAD from Windows.
 publish_to: 'none'
 
-version: 1.0.3+4
+version: 1.1.0+5
 
 environment:
   sdk: ^3.12.2

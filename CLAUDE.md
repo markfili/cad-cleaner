@@ -60,6 +60,11 @@ changes to `windows_cad_service.dart` as unverified until proven otherwise.
   list of things about to be deleted.
 - **Severity comes from `SemanticRole`**, not raw colors. Irreversible ⇒
   `danger`, not `warning`.
+- **Verify destructive work; don't assume it happened.** Every removal command
+  passes `-ErrorAction SilentlyContinue`, so failure and success look identical.
+  `cleanRegistry` reads the keys back and throws listing survivors;
+  `uninstallProducts` checks each exit code. Anything new that deletes should do
+  the same rather than logging and moving on.
 - **The mock must model effects, not just timing.** A mock that sleeps and logs
   but doesn't mutate its state lies: uninstall once reported success while the
   products came straight back on the next scan. If an operation changes the

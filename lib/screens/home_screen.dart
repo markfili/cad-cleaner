@@ -4,7 +4,9 @@ import '../cad/cad_service.dart';
 import '../theme/app_dimens.dart';
 import '../theme/semantic_colors.dart';
 import '../widgets/simulation_banner.dart';
+import '../widgets/info_callout.dart';
 import 'install_wizard_screen.dart';
+import 'remove_gstarcad_screen.dart';
 import 'uninstall_wizard_screen.dart';
 
 /// Landing screen: what is installed, and the two wizards that change it.
@@ -23,6 +25,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<String> autocadProducts = [];
   bool isDetectingAutocad = true;
+
+  /// Autodesk registry keys still on the system. Empty means clean.
+  List<String> leftoverRegistryKeys = [];
 
   GstarCadStatus gstarStatus = GstarCadStatus.checking;
   String? gstarProductName;
@@ -47,9 +52,13 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => isDetectingAutocad = true);
     try {
       final products = await service.detectInstallations();
+      // Registry leftovers outlive the products themselves, so this is checked
+      // whether or not AutoCAD is still installed.
+      final leftovers = await service.findRemainingRegistryKeys();
       if (!mounted) return;
       setState(() {
         autocadProducts = products;
+        leftoverRegistryKeys = leftovers;
         isDetectingAutocad = false;
       });
     } catch (_) {
@@ -100,6 +109,18 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => InstallWizardScreen(
           service: service,
           downloadedInstallerPath: downloadedInstallerPath,
+        ),
+      ),
+    );
+    await _refresh();
+  }
+
+  Future<void> _openRemoveGstarCad() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RemoveGstarCadScreen(
+          service: service,
+          productName: gstarProductName ?? 'GstarCAD',
         ),
       ),
     );
@@ -165,11 +186,50 @@ class _HomeScreenState extends State<HomeScreen> {
           ? 'Installed — ${autocadProducts.length} product(s) found'
           : 'Not installed',
       details: installed ? autocadProducts : const [],
+      footer: _buildRegistryCheck(),
       // Nothing to uninstall when nothing was found.
       action: FilledButton.icon(
         onPressed: installed ? _openUninstallWizard : null,
         icon: const Icon(Icons.delete_outline, size: 18),
         label: const Text('Start Uninstall Wizard'),
+      ),
+    );
+  }
+
+  /// Whether the Autodesk registry keys are actually gone.
+  ///
+  /// Removal runs with -ErrorAction SilentlyContinue, so leftovers are silent
+  /// unless something reads the registry back and says so.
+  Widget? _buildRegistryCheck() {
+    if (isDetectingAutocad) {
+      return null;
+    }
+
+    final clean = leftoverRegistryKeys.isEmpty;
+    return InfoCallout(
+      role: clean ? SemanticRole.success : SemanticRole.warning,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            clean
+                ? 'Registry clean — no Autodesk keys found'
+                : 'Registry not clear — ${leftoverRegistryKeys.length} '
+                    'Autodesk key(s) still present',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          if (!clean) ...[
+            const SizedBox(height: AppSpacing.xs),
+            for (final key in leftoverRegistryKeys)
+              Text(
+                key,
+                style: const TextStyle(
+                  fontFamilyFallback: AppFonts.monoFallback,
+                  fontSize: 11,
+                ),
+              ),
+          ],
+        ],
       ),
     );
   }
@@ -218,6 +278,14 @@ class _HomeScreenState extends State<HomeScreen> {
         if (downloaded) downloadedInstallerPath!,
       ],
       detailsAreMonospace: true,
+      // Removal is only offered for something actually installed.
+      secondaryAction: installed
+          ? OutlinedButton.icon(
+              onPressed: _openRemoveGstarCad,
+              icon: const Icon(Icons.delete_outline, size: 18),
+              label: const Text('Remove GstarCAD'),
+            )
+          : null,
       action: FilledButton.icon(
         onPressed: _openInstallWizard,
         icon: Icon(installed ? Icons.refresh : Icons.download, size: 18),
@@ -240,6 +308,8 @@ class _StatusCard extends StatelessWidget {
     this.busyLabel,
     this.details = const [],
     this.detailsAreMonospace = false,
+    this.footer,
+    this.secondaryAction,
   });
 
   final String title;
@@ -251,6 +321,12 @@ class _StatusCard extends StatelessWidget {
   final String status;
   final List<String> details;
   final bool detailsAreMonospace;
+
+  /// Extra content below the status, above the actions.
+  final Widget? footer;
+
+  /// Lower-emphasis action shown left of [action].
+  final Widget? secondaryAction;
   final Widget action;
 
   @override
@@ -323,8 +399,21 @@ class _StatusCard extends StatelessWidget {
                 ),
               ],
             ],
+            if (footer != null) ...[
+              const SizedBox(height: AppSpacing.lg),
+              footer!,
+            ],
             const SizedBox(height: AppSpacing.xl),
-            Align(alignment: Alignment.centerRight, child: action),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (secondaryAction != null) ...[
+                  secondaryAction!,
+                  const SizedBox(width: AppSpacing.md),
+                ],
+                action,
+              ],
+            ),
           ],
         ),
       ),

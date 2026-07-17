@@ -100,12 +100,16 @@ class WindowsCadService extends CadService {
           'again';
     }
 
-    final raw = _uninstallStringsByName[product];
+    return _runUninstallCommand(_uninstallStringsByName[product]);
+  }
+
+  /// Runs one uninstall command. Returns null on success, or a reason.
+  Future<String?> _runUninstallCommand(String? raw) async {
     if (raw == null || raw.isEmpty) {
       // The entry exists but offers no command. Saying "not found" here would
       // send the user looking for the wrong problem.
       return 'its registry entry has no uninstall command, so it has to be '
-          'removed with the Autodesk installer';
+          'removed with its own installer';
     }
 
     final command = parseUninstallString(raw);
@@ -195,27 +199,60 @@ class WindowsCadService extends CadService {
         r'C:\ProgramData\Autodesk',
       ]);
 
+  static const _autodeskRegistryKeys = [
+    r'HKLM:\Software\Autodesk',
+    r'HKLM:\Software\Wow6432Node\Autodesk',
+    r'HKCU:\Software\Autodesk',
+    r'HKCU:\Software\Classes\AutoCAD.*',
+    r'HKCU:\Software\Classes\.dwg',
+    r'HKCU:\Software\Classes\.dxf',
+  ];
+
   @override
   Future<void> cleanRegistry() async {
-    const registryPaths = [
-      r'HKLM:\Software\Autodesk',
-      r'HKLM:\Software\Wow6432Node\Autodesk',
-      r'HKCU:\Software\Autodesk',
-      r'HKCU:\Software\Classes\AutoCAD.*',
-      r'HKCU:\Software\Classes\.dwg',
-      r'HKCU:\Software\Classes\.dxf',
-    ];
+    for (final path in _autodeskRegistryKeys) {
+      log('Removing registry key $path');
+      await _runPowerShell(
+        'Remove-Item -Path "$path" -Recurse -Force -ErrorAction SilentlyContinue',
+      );
+    }
 
-    for (final path in registryPaths) {
-      try {
-        log('Removing registry key $path');
-        await _runPowerShell(
-          'Remove-Item -Path "$path" -Recurse -Force -ErrorAction SilentlyContinue',
-        );
-      } catch (e) {
-        log('Error removing registry $path: $e');
+    // Remove-Item ran with -ErrorAction SilentlyContinue, so it reports nothing
+    // whether it worked or not. Read the registry back and see.
+    log('Verifying the registry keys are gone...');
+    final remaining = await findRemainingRegistryKeys();
+
+    if (remaining.isEmpty) {
+      log('  ✓ verified: no Autodesk registry keys remain');
+      return;
+    }
+
+    for (final key in remaining) {
+      log('  ✗ still present: $key');
+    }
+    throw CadServiceException(
+      'The registry was not fully cleared — ${remaining.length} key(s) are '
+      'still present: ${remaining.join(', ')}. They may be held by a running '
+      'process, or need permissions this account does not have.',
+    );
+  }
+
+  @override
+  Future<List<String>> findRemainingRegistryKeys() async {
+    final remaining = <String>[];
+
+    for (final path in _autodeskRegistryKeys) {
+      // A marker rather than Test-Path's `True`/`False`, so a localised or
+      // unexpected PowerShell response can't read as a false negative.
+      final result = await _runPowerShell(
+        'if (Test-Path -Path "$path") { Write-Output "PRESENT" }',
+      );
+      if (result.contains('PRESENT')) {
+        remaining.add(path);
       }
     }
+
+    return remaining;
   }
 
   @override
@@ -239,6 +276,37 @@ class WindowsCadService extends CadService {
     final products =
         await _queryProducts("\$_.DisplayName -like '*GstarCAD*'");
     return products.isEmpty ? null : products.first.displayName;
+  }
+
+  @override
+  Future<void> uninstallGstarCad() async {
+    final products = await _queryProducts("\$_.DisplayName -like '*GstarCAD*'");
+
+    if (products.isEmpty) {
+      throw const CadServiceException(
+        'No GstarCAD installation was found in the registry, so there is '
+        'nothing to remove.',
+      );
+    }
+
+    final failures = <String>[];
+    for (final product in products) {
+      log('Uninstalling ${product.displayName}...');
+      final reason = await _runUninstallCommand(product.uninstallString);
+      if (reason == null) {
+        log('  ✓ ${product.displayName} removed');
+      } else {
+        log('  ✗ ${product.displayName}: $reason');
+        failures.add(product.displayName);
+      }
+    }
+
+    if (failures.isNotEmpty) {
+      throw CadServiceException(
+        'GstarCAD could not be fully removed: ${failures.join(', ')}. See the '
+        'log for what each one reported.',
+      );
+    }
   }
 
   String get _installerPath =>

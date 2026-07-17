@@ -38,6 +38,7 @@ class MockCadService extends CadService {
   /// The fake system's current state, mutated by the simulated operations so a
   /// demo run reflects what the wizards did.
   final List<String> _installedProducts = List.of(_fakeProducts);
+  final List<String> _remainingRegistryKeys = List.of(_fakeRegistryKeys);
   bool _gstarCadDownloaded = false;
   bool _gstarCadInstalled = false;
 
@@ -86,6 +87,31 @@ class MockCadService extends CadService {
       log('Removing registry key $key');
       await _pause(350);
     }
+
+    // Actually clear them, so the verification below reflects the work rather
+    // than always passing.
+    _remainingRegistryKeys.clear();
+
+    log('Verifying the registry keys are gone...');
+    await _pause(400);
+    final remaining = await findRemainingRegistryKeys();
+    if (remaining.isEmpty) {
+      log('  ✓ verified: no Autodesk registry keys remain');
+      return;
+    }
+    for (final key in remaining) {
+      log('  ✗ still present: $key');
+    }
+    throw CadServiceException(
+      'The registry was not fully cleared — ${remaining.length} key(s) are '
+      'still present: ${remaining.join(', ')}.',
+    );
+  }
+
+  @override
+  Future<List<String>> findRemainingRegistryKeys() async {
+    await _pause(300);
+    return List.of(_remainingRegistryKeys);
   }
 
   @override
@@ -132,6 +158,23 @@ class MockCadService extends CadService {
     await _pause(900);
     _gstarCadInstalled = true;
     log('Simulated install finished — nothing was actually run.');
+  }
+
+  @override
+  Future<void> uninstallGstarCad() async {
+    if (!_gstarCadInstalled) {
+      throw const CadServiceException(
+        'No GstarCAD installation was found in the registry, so there is '
+        'nothing to remove.',
+      );
+    }
+
+    log('Uninstalling GstarCAD 2027 (simulated)...');
+    await _pause(900);
+    log('  running C:\\Program Files\\Gstarsoft\\GstarCAD2027\\uninstall.exe');
+    await _pause(800);
+    _gstarCadInstalled = false;
+    log('  ✓ GstarCAD 2027 (simulated) removed');
   }
 
   Future<void> _pause(int milliseconds) =>

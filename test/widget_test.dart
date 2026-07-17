@@ -68,6 +68,21 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('reports leftover Autodesk registry keys',
+        (WidgetTester tester) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        CadCleanerApp(service: _StubbornRegistryMockCadService()),
+      );
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+
+      expect(
+        find.textContaining('Registry not clear — 2 Autodesk key(s)'),
+        findsOneWidget,
+      );
+      expect(find.text(r'HKLM:\Software\Autodesk'), findsOneWidget);
+    });
   });
 
   group('uninstall wizard', () {
@@ -220,6 +235,93 @@ void main() {
       );
     });
 
+    testWidgets('the registry check confirms the cleanup worked',
+        (WidgetTester tester) async {
+      await pumpHome(tester);
+
+      // The mock starts with keys present.
+      expect(find.textContaining('Registry not clear'), findsOneWidget);
+
+      await tester.tap(find.text('Start Uninstall Wizard'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove Registry Entries'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Uninstall'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Proceed'));
+      await tester.pumpAndSettle(const Duration(seconds: 30));
+
+      // The wizard verifies rather than assuming the removal worked.
+      expect(
+        find.textContaining('no Autodesk registry keys remain'),
+        findsWidgets,
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Done'));
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+
+      expect(find.textContaining('Registry clean'), findsOneWidget);
+    });
+  });
+
+  group('remove GstarCAD', () {
+    testWidgets('is not offered when GstarCAD is not installed',
+        (WidgetTester tester) async {
+      await pumpHome(tester);
+
+      expect(find.text('Start Install Wizard'), findsOneWidget);
+      expect(find.text('Remove GstarCAD'), findsNothing);
+    });
+
+    testWidgets('is offered when GstarCAD is installed',
+        (WidgetTester tester) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        CadCleanerApp(service: _GstarCadInstalledMockCadService()),
+      );
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+
+      expect(find.text('Remove GstarCAD'), findsOneWidget);
+      expect(find.text('Reinstall GstarCAD'), findsOneWidget);
+    });
+
+    testWidgets('removes GstarCAD and updates the home card',
+        (WidgetTester tester) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        CadCleanerApp(service: _GstarCadInstalledMockCadService()),
+      );
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+      expect(
+        find.text('Installed — GstarCAD 2027 (simulated)'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Remove GstarCAD'));
+      await tester.pumpAndSettle();
+
+      // The confirm step names what is about to be removed.
+      expect(find.text('Remove GstarCAD'), findsWidgets);
+      expect(find.text('GstarCAD 2027 (simulated)'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove GstarCAD'));
+      await tester.pumpAndSettle(const Duration(seconds: 30));
+      expect(find.text('GstarCAD Removed'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Done'));
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+
+      expect(
+        find.text('Not installed — installer not downloaded'),
+        findsOneWidget,
+      );
+      expect(find.text('Remove GstarCAD'), findsNothing);
+    });
+  });
+
+  group('install wizard', () {
     testWidgets('a denied elevation prompt is explained and retryable',
         (WidgetTester tester) async {
       useDesktopWindow(tester);
@@ -256,6 +358,31 @@ void main() {
 class _EmptyMockCadService extends MockCadService {
   @override
   Future<List<String>> detectInstallations() async => [];
+}
+
+/// A system where GstarCAD is already installed.
+class _GstarCadInstalledMockCadService extends MockCadService {
+  bool removed = false;
+
+  @override
+  Future<String?> detectGstarCad() async =>
+      removed ? null : 'GstarCAD 2027 (simulated)';
+
+  @override
+  Future<void> uninstallGstarCad() async {
+    log('Uninstalling GstarCAD 2027 (simulated)...');
+    removed = true;
+    log('  ✓ GstarCAD 2027 (simulated) removed');
+  }
+}
+
+/// A system where the Autodesk registry keys survive the cleanup.
+class _StubbornRegistryMockCadService extends MockCadService {
+  @override
+  Future<List<String>> findRemainingRegistryKeys() async => [
+        r'HKLM:\Software\Autodesk',
+        r'HKCU:\Software\Autodesk',
+      ];
 }
 
 /// A system where the uninstall reports a real failure.
