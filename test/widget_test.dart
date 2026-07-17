@@ -120,6 +120,37 @@ void main() {
       expect(button.onPressed, isNull);
     });
 
+    testWidgets('a failed removal is reported instead of claiming success',
+        (WidgetTester tester) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        CadCleanerApp(service: _FailingUninstallMockCadService()),
+      );
+      await tester.pumpAndSettle(const Duration(seconds: 5));
+
+      await tester.tap(find.text('Start Uninstall Wizard'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Uninstall'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Proceed'));
+      await tester.pumpAndSettle(const Duration(seconds: 30));
+
+      // The success screen must not appear when products remain.
+      expect(find.text('Uninstallation Complete'), findsNothing);
+      expect(find.text('Uninstall failed'), findsOneWidget);
+      expect(
+        find.textContaining('could not be uninstalled'),
+        findsWidgets,
+      );
+
+      final retry = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Retry'),
+      );
+      expect(retry.onPressed, isNotNull);
+    });
+
     testWidgets('is unreachable when no AutoCAD is installed',
         (WidgetTester tester) async {
       useDesktopWindow(tester);
@@ -225,6 +256,18 @@ void main() {
 class _EmptyMockCadService extends MockCadService {
   @override
   Future<List<String>> detectInstallations() async => [];
+}
+
+/// A system where the uninstall reports a real failure.
+class _FailingUninstallMockCadService extends MockCadService {
+  @override
+  Future<void> uninstallProducts(List<String> products) async {
+    await super.uninstallProducts(products);
+    throw const CadServiceException(
+      'These products could not be uninstalled: AutoCAD 2024 - English. The '
+      'rest were removed. See the log for details.',
+    );
+  }
 }
 
 /// Reproduces the Windows elevation failure: the UAC prompt was dismissed.

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:process/process.dart';
 
 import 'cad_service.dart';
+import 'uninstall_command.dart';
 
 /// Performs real removal of AutoCAD and real installation of GstarCAD via
 /// PowerShell and the Windows registry.
@@ -36,36 +37,93 @@ class WindowsCadService extends CadService {
       return;
     }
 
-    try {
-      // Kill any running AutoCAD processes so files aren't locked.
-      await _runCommand('taskkill', ['/F', '/IM', 'acad.exe']);
-      await _runCommand('taskkill', ['/F', '/IM', 'accoread.exe']);
+    // Kill any running AutoCAD processes so files aren't locked.
+    await _runCommand('taskkill', ['/F', '/IM', 'acad.exe']);
+    await _runCommand('taskkill', ['/F', '/IM', 'accoread.exe']);
 
-      for (final product in products) {
-        log('Uninstalling $product...');
-        for (final path in _uninstallRegistryPaths) {
-          final psScript = '''
-            \$key = Get-ItemProperty "$path\\*" -ErrorAction SilentlyContinue |
-                    Where-Object { \$_.DisplayName -eq "$product" }
+    final failures = <String>[];
 
-            if (\$key) {
-              \$uninstallString = \$key.UninstallString
-              if (\$uninstallString -like "MsiExec.exe*") {
-                \$productCode = \$uninstallString -replace 'MsiExec.exe /X', '' -replace ' /.*', ''
-                & MsiExec.exe /X\$productCode /qn
-              } elseif (\$uninstallString) {
-                & cmd /c "\$uninstallString"
-              }
-            }
-          ''';
-
-          await _runPowerShell(psScript);
-        }
+    for (final product in products) {
+      log('Uninstalling $product...');
+      final reason = await _uninstallOne(product);
+      if (reason == null) {
+        log('  ✓ $product removed');
+      } else {
+        log('  ✗ $product: $reason');
+        failures.add(product);
       }
-    } catch (e) {
-      log('Error uninstalling products: $e');
+    }
+
+    // Reporting "complete" while products remain would be a lie; the wizard
+    // shows this as a failure with the log alongside it.
+    if (failures.isNotEmpty) {
+      throw CadServiceException(
+        failures.length == products.length
+            ? 'None of the AutoCAD products could be uninstalled. See the log '
+                'for what each one reported.'
+            : 'These products could not be uninstalled: ${failures.join(', ')}. '
+                'The rest were removed. See the log for details.',
+      );
     }
   }
+
+  /// Uninstalls one product. Returns null on success, or a reason on failure.
+  Future<String?> _uninstallOne(String product) async {
+    final raw = await _readUninstallString(product);
+    if (raw == null || raw.isEmpty) {
+      return 'no uninstall entry found in the registry';
+    }
+
+    final command = parseUninstallString(raw);
+    if (command == null) {
+      return 'could not interpret its uninstall command ($raw)';
+    }
+
+    log('  running ${command.executable}');
+
+    // Start-Process takes the executable and arguments separately, so a path
+    // containing spaces needs no quoting gymnastics. The old code passed the
+    // whole string to `cmd /c`, which split it at the first space and failed
+    // with '"C:\Program" is not recognized...'.
+    final script = StringBuffer()
+      ..write("\$p = Start-Process -FilePath '${_psQuote(command.executable)}'");
+    if (command.arguments.isNotEmpty) {
+      script.write(" -ArgumentList '${_psQuote(command.arguments)}'");
+    }
+    script.write(' -Wait -PassThru -ErrorAction Stop; exit \$p.ExitCode');
+
+    final result = await _runPowerShellRaw(script.toString());
+    final exitCode = result.exitCode;
+
+    // 0 = done, 3010 = done but wants a reboot, 1605 = already gone.
+    if (exitCode == 0 || exitCode == 3010 || exitCode == 1605) {
+      return null;
+    }
+    final details = result.stderr.toString().trim();
+    return details.isEmpty ? 'exit code $exitCode' : details;
+  }
+
+  /// Returns the product's QuietUninstallString, or UninstallString.
+  Future<String?> _readUninstallString(String product) async {
+    for (final path in _uninstallRegistryPaths) {
+      final result = await _runPowerShell(
+        '\$k = Get-ItemProperty "$path\\*" -ErrorAction SilentlyContinue | '
+        "Where-Object { \$_.DisplayName -eq '${_psQuote(product)}' } | "
+        'Select-Object -First 1; '
+        'if (\$k) { if (\$k.QuietUninstallString) { \$k.QuietUninstallString } '
+        'else { \$k.UninstallString } }',
+      );
+
+      final value = result.trim();
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /// Escapes a value for a PowerShell single-quoted string.
+  String _psQuote(String value) => value.replaceAll("'", "''");
 
   @override
   Future<void> removeDirectories() => _removeAll([
@@ -277,8 +335,19 @@ class WindowsCadService extends CadService {
   }
 
   Future<String> _runPowerShell(String script) async {
+    final result = await _runPowerShellRaw(script);
+    if (result.exitCode == 0) {
+      return result.stdout.toString();
+    }
+    log('PowerShell error: ${result.stderr}');
+    return '';
+  }
+
+  /// Runs PowerShell and hands back the raw result, so callers that care about
+  /// the exit code can see it rather than getting an empty string.
+  Future<ProcessResult> _runPowerShellRaw(String script) async {
     try {
-      final result = await _processManager.run([
+      return await _processManager.run([
         'powershell',
         '-NoProfile',
         '-ExecutionPolicy',
@@ -286,15 +355,9 @@ class WindowsCadService extends CadService {
         '-Command',
         script,
       ]);
-
-      if (result.exitCode == 0) {
-        return result.stdout.toString();
-      }
-      log('PowerShell error: ${result.stderr}');
-      return '';
     } catch (e) {
       log('Error running PowerShell: $e');
-      return '';
+      return ProcessResult(0, -1, '', '$e');
     }
   }
 

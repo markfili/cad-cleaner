@@ -78,6 +78,20 @@ such things with `Start-Process -Verb RunAs`, and pass `-ErrorAction Stop`
 inside a try/catch that does `exit 1`, since a failed `Start-Process` is a
 non-terminating error and PowerShell would otherwise exit 0 on failure.
 
+## Registry uninstall strings
+
+Never hand a registry `UninstallString` to `cmd /c`. Autodesk's are typically
+unquoted *and* contain spaces (`C:\Program Files\Autodesk\...\Setup.exe
+--uninstall`), so cmd splits at the first space and fails with
+`'"C:\Program" is not recognized...'`. Parse it with `parseUninstallString`
+(`lib/cad/uninstall_command.dart`) and pass the executable and arguments to
+`Start-Process` separately.
+
+That parser is deliberately plain Dart with no `dart:io` dependency, so it can
+be unit-tested on a Mac — see `test/uninstall_command_test.dart`. When a new
+uninstall-string shape turns up, add a case there rather than testing on
+Windows by hand.
+
 ## Theme
 
 Hand-authored light/dark `ColorScheme`s (`lib/theme/app_colors.dart`), not
