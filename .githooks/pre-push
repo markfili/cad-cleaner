@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#
+# Asks whether to bump the version and cut a release tag before pushing.
+#
+# Pushing a v*.*.* tag is what triggers the release workflow, so this is the
+# moment to decide. Enable with:
+#
+#   git config core.hooksPath .githooks
+#
+# Bypass for a single push with `git push --no-verify`.
+
+set -euo pipefail
+
+# Never prompt in CI or when there's no terminal to ask on.
+if [ -n "${CI:-}" ] || [ ! -e /dev/tty ]; then
+  exit 0
+fi
+
+root="$(git rev-parse --show-toplevel)"
+pubspec="$root/pubspec.yaml"
+[ -f "$pubspec" ] || exit 0
+
+current=$(grep -m1 '^version:' "$pubspec" | sed 's/^version:[[:space:]]*//')
+name="${current%%+*}"
+build="${current##*+}"
+tag="v$name"
+
+# Read answers from the terminal: stdin here is git's ref list, not the user.
+exec < /dev/tty
+
+echo
+echo "  Current version: $name (build $build)"
+if git rev-parse "$tag" >/dev/null 2>&1; then
+  echo "  Tag $tag already exists — a release for this version was already cut."
+else
+  echo "  No tag $tag yet."
+fi
+echo
+printf '  Bump version and tag a release before pushing? [p]atch / [m]inor / [M]ajor / [n]o (default: n): '
+read -r answer || answer=n
+
+case "$answer" in
+  p|patch) part=patch ;;
+  m|minor) part=minor ;;
+  M|major) part=major ;;
+  *)
+    echo "  Skipping version bump."
+    exit 0
+    ;;
+esac
+
+IFS='.' read -r major minor patch <<< "$name"
+case "$part" in
+  major) major=$((major + 1)); minor=0; patch=0 ;;
+  minor) minor=$((minor + 1)); patch=0 ;;
+  patch) patch=$((patch + 1)) ;;
+esac
+build=$((build + 1))
+
+new_version="$major.$minor.$patch"
+new_tag="v$new_version"
+
+if git rev-parse "$new_tag" >/dev/null 2>&1; then
+  echo "  ✗ Tag $new_tag already exists. Aborting."
+  exit 1
+fi
+
+if ! git diff --quiet -- "$pubspec"; then
+  echo "  ✗ pubspec.yaml has uncommitted changes. Commit or stash them first."
+  exit 1
+fi
+
+# BSD (macOS) sed needs an explicit empty suffix for -i; GNU sed does not.
+if sed --version >/dev/null 2>&1; then
+  sed -i "s/^version:.*/version: $new_version+$build/" "$pubspec"
+else
+  sed -i '' "s/^version:.*/version: $new_version+$build/" "$pubspec"
+fi
+
+git add "$pubspec"
+git commit -m "chore: release $new_tag"
+git tag -a "$new_tag" -m "$new_tag"
+
+echo
+echo "  ✓ Bumped $name -> $new_version and tagged $new_tag."
+echo
+echo "  This push was stopped because the new commit and tag are not part of"
+echo "  it. Push them to trigger the release build:"
+echo
+echo "      git push && git push origin $new_tag"
+echo
+
+# Abort: the refs for this push were computed before the bump existed.
+exit 1
