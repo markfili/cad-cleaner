@@ -78,6 +78,21 @@ such things with `Start-Process -Verb RunAs`, and pass `-ErrorAction Stop`
 inside a try/catch that does `exit 1`, since a failed `Start-Process` is a
 non-terminating error and PowerShell would otherwise exit 0 on failure.
 
+## Reading data out of PowerShell
+
+**Never parse PowerShell's console output.** It is formatted for a display: long
+values wrap (~120 columns when stdout is redirected) and text is re-encoded
+through the console codepage, so long or non-ASCII product names come back
+corrupted. Emit `ConvertTo-Json` to a UTF-8 file with `Set-Content` and read the
+file (`_queryProducts`); parse it with `parseRegistryProductsJson`
+(`lib/cad/registry_product.dart`), which also strips the BOM Windows PowerShell
+writes.
+
+Related: **don't re-look-up a product by its display name.** The name is a label,
+not a key. Capture the UninstallString during detection and carry it forward —
+matching on a round-tripped name is what produced "no uninstall entry found in
+the registry" for a product that had just been detected.
+
 ## Registry uninstall strings
 
 Never hand a registry `UninstallString` to `cmd /c`. Autodesk's are typically

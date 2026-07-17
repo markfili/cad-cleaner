@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:process/process.dart';
 
 import 'cad_service.dart';
+import 'registry_product.dart';
 import 'uninstall_command.dart';
 
 /// Performs real removal of AutoCAD and real installation of GstarCAD via
@@ -27,9 +29,28 @@ class WindowsCadService extends CadService {
 
   // --- AutoCAD removal ---
 
+  /// Uninstall commands captured during detection, keyed by display name.
+  ///
+  /// The uninstall string is captured up front rather than looked up again by
+  /// name later: the name is only a label, and round-tripping it through
+  /// PowerShell's text output corrupts anything long or non-ASCII, which then
+  /// matches nothing.
+  final Map<String, String?> _uninstallStringsByName = {};
+
   @override
-  Future<List<String>> detectInstallations() =>
-      _findProductsMatching('*AutoCAD*', alsoMatch: '*Autodesk*');
+  Future<List<String>> detectInstallations() async {
+    final products = await _queryProducts(
+      "\$_.DisplayName -like '*AutoCAD*' -or \$_.DisplayName -like '*Autodesk*'",
+    );
+
+    _uninstallStringsByName
+      ..clear()
+      ..addEntries(
+        products.map((p) => MapEntry(p.displayName, p.uninstallString)),
+      );
+
+    return _uninstallStringsByName.keys.toList();
+  }
 
   @override
   Future<void> uninstallProducts(List<String> products) async {
@@ -69,9 +90,22 @@ class WindowsCadService extends CadService {
 
   /// Uninstalls one product. Returns null on success, or a reason on failure.
   Future<String?> _uninstallOne(String product) async {
-    final raw = await _readUninstallString(product);
+    // Populate the cache if the wizard was reached without a scan.
+    if (_uninstallStringsByName.isEmpty) {
+      await detectInstallations();
+    }
+
+    if (!_uninstallStringsByName.containsKey(product)) {
+      return 'no registry entry matches this name any more — re-scan and try '
+          'again';
+    }
+
+    final raw = _uninstallStringsByName[product];
     if (raw == null || raw.isEmpty) {
-      return 'no uninstall entry found in the registry';
+      // The entry exists but offers no command. Saying "not found" here would
+      // send the user looking for the wrong problem.
+      return 'its registry entry has no uninstall command, so it has to be '
+          'removed with the Autodesk installer';
     }
 
     final command = parseUninstallString(raw);
@@ -103,23 +137,52 @@ class WindowsCadService extends CadService {
     return details.isEmpty ? 'exit code $exitCode' : details;
   }
 
-  /// Returns the product's QuietUninstallString, or UninstallString.
-  Future<String?> _readUninstallString(String product) async {
-    for (final path in _uninstallRegistryPaths) {
-      final result = await _runPowerShell(
-        '\$k = Get-ItemProperty "$path\\*" -ErrorAction SilentlyContinue | '
-        "Where-Object { \$_.DisplayName -eq '${_psQuote(product)}' } | "
-        'Select-Object -First 1; '
-        'if (\$k) { if (\$k.QuietUninstallString) { \$k.QuietUninstallString } '
-        'else { \$k.UninstallString } }',
-      );
+  /// Queries the uninstall registry keys for entries matching a PowerShell
+  /// condition, returning name *and* uninstall command together.
+  ///
+  /// The result goes to a UTF-8 file as JSON rather than coming back on
+  /// stdout. PowerShell formats console output for a display: it wraps long
+  /// lines (~120 columns when redirected) and re-encodes text through the
+  /// console codepage, both of which silently corrupt product names.
+  Future<List<RegistryProduct>> _queryProducts(String condition) async {
+    final outputPath =
+        '${Directory.systemTemp.path}\\cad_cleaner_registry_query.json';
+    final paths = _uninstallRegistryPaths.map((p) => "'$p'").join(',');
 
-      final value = result.trim();
-      if (value.isNotEmpty) {
-        return value;
+    final script = "\$ErrorActionPreference = 'SilentlyContinue'; "
+        '\$items = @(); '
+        'foreach (\$p in @($paths)) { '
+        '  \$items += Get-ItemProperty "\$p\\*" | '
+        '    Where-Object { $condition } | '
+        '    Select-Object DisplayName, DisplayVersion, UninstallString, QuietUninstallString '
+        '}; '
+        'ConvertTo-Json -InputObject @(\$items) -Compress -Depth 3 | '
+        "Set-Content -LiteralPath '${_psQuote(outputPath)}' -Encoding UTF8";
+
+    final result = await _runPowerShellRaw(script);
+    if (result.exitCode != 0) {
+      log('Registry query failed: ${result.stderr}');
+      return [];
+    }
+
+    final file = File(outputPath);
+    if (!file.existsSync()) {
+      log('Registry query produced no output.');
+      return [];
+    }
+
+    try {
+      return parseRegistryProductsJson(await file.readAsString(encoding: utf8));
+    } catch (e) {
+      log('Could not read the registry query output: $e');
+      return [];
+    } finally {
+      try {
+        file.deleteSync();
+      } catch (_) {
+        // A leftover temp file is not worth failing the scan over.
       }
     }
-    return null;
   }
 
   /// Escapes a value for a PowerShell single-quoted string.
@@ -173,8 +236,9 @@ class WindowsCadService extends CadService {
 
   @override
   Future<String?> detectGstarCad() async {
-    final products = await _findProductsMatching('*GstarCAD*');
-    return products.isEmpty ? null : products.first;
+    final products =
+        await _queryProducts("\$_.DisplayName -like '*GstarCAD*'");
+    return products.isEmpty ? null : products.first.displayName;
   }
 
   String get _installerPath =>
@@ -284,40 +348,6 @@ class WindowsCadService extends CadService {
     }
   }
 
-  /// Returns DisplayNames from the uninstall registry keys matching a pattern.
-  Future<List<String>> _findProductsMatching(
-    String pattern, {
-    String? alsoMatch,
-  }) async {
-    final products = <String>[];
-
-    try {
-      final condition = alsoMatch == null
-          ? '\$_.DisplayName -like "$pattern"'
-          : '\$_.DisplayName -like "$pattern" -or \$_.DisplayName -like "$alsoMatch"';
-
-      for (final path in _uninstallRegistryPaths) {
-        final result = await _runPowerShell(
-          'Get-ItemProperty "$path\\*" -ErrorAction SilentlyContinue | '
-          'Where-Object { $condition } | '
-          'Select-Object -ExpandProperty DisplayName',
-        );
-
-        if (result.isNotEmpty) {
-          products.addAll(
-            result.split('\n').map((line) => line.trim()).where(
-                  (line) => line.isNotEmpty,
-                ),
-          );
-        }
-      }
-
-      return products.toSet().toList();
-    } catch (e) {
-      log('Error querying installed products: $e');
-      return [];
-    }
-  }
 
   Future<void> _removeAll(List<String> directories) async {
     for (final dir in directories) {
